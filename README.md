@@ -1,9 +1,57 @@
-# TokenVM - Production-Ready LLM KV Cache Virtual Memory Runtime
+# TokenVM - LLM KV cache virtual memory runtime
 
 > [!WARNING]
 > This is a proof-of-concept implementation. Production deployments should undergo thorough testing and optimization for specific workloads.
 
 TokenVM is a high-performance runtime that treats LLM KV cache and activations as a virtual memory working set across GPU VRAM → pinned host RAM → NVMe storage, with intelligent paging, prefetching, and compute-copy overlap.
+
+```mermaid
+flowchart TB
+    A["Python / HuggingFace - Attention Hook via ctypes"]
+
+    %% Go Control Plane (two rows)
+    subgraph B["Go Control Plane"]
+        direction TB
+        subgraph B_row1[ ]
+            direction LR
+            B1["Pager"]
+            B2["Policies (LRU/2Q)"]
+        end
+        subgraph B_row2[ ]
+            direction LR
+            B3["Residency Map"]
+            B4["Metrics (Prometheus)"]
+        end
+    end
+
+    %% CUDA / C++ Data Plane (two rows)
+    subgraph C["CUDA / C++ Data Plane"]
+        direction TB
+        subgraph C_row1[ ]
+            direction LR
+            C1["VRAM Arena"]
+            C2["Streams / Events"]
+        end
+        subgraph C_row2[ ]
+            direction LR
+            C3["Pack / Gather"]
+            C4["Async Memcpy"]
+        end
+    end
+
+    %% Storage Tiers (single row)
+    subgraph D["Storage Tiers"]
+        direction LR
+        D1["GPU (VRAM)"]
+        D2["HOST (Pinned)"]
+        D3["NVMe (io_uring)"]
+    end
+
+    A --> B
+    A --> C
+    B --> D
+    C --> D
+```
 
 ## 🚀 Features
 
@@ -14,14 +62,14 @@ TokenVM is a high-performance runtime that treats LLM KV cache and activations a
 - **Production-ready**: Minimal dependencies, robust error handling
 - **Auto-installation**: Single command setup with dependency management
 
-## 📊 Performance Targets
+## 📊 Performance targets
 
 - **Long context**: 32k-64k tokens with ≥30% VRAM reduction
 - **Overlap ratio**: ≥60% copy operations hidden under compute
 - **Throughput**: ≥1.5× baseline at same memory limit
 - **Latency**: ≤85% of baseline per-token latency
 
-## 🛠️ Quick Start
+## 🛠️ Quick start
 
 ### One-Command Installation
 
@@ -133,14 +181,14 @@ TOKENVM_POLICY=predictor make benchmark
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Python/HuggingFace                    │
-│                  (Transformers Integration)              │
+│                    Python/HuggingFace                   │
+│                  (Transformers Integration)             │
 └────────────────────────┬────────────────────────────────┘
                          │ ctypes FFI
 ┌────────────────────────┴────────────────────────────────┐
-│                      C ABI Layer                         │
-│              (tokenvm.h - Flat C Interface)              │
-├─────────────────────────┬────────────────────────────────┤
+│                      C ABI Layer                        │
+│              (tokenvm.h - Flat C Interface)             │
+├─────────────────────────┬───────────────────────────────┤
 │      Go Control Plane   │    CUDA/C++ Data Plane        │
 │  ┌──────────────────┐   │   ┌─────────────────────┐     │
 │  │ Pager/Scheduler  │   │   │  VRAM Arena Mgmt    │     │
@@ -151,8 +199,8 @@ TOKENVM_POLICY=predictor make benchmark
 └─────────────┬───────────┴──────────────┬────────────────┘
               │                          │
     ┌─────────▼──────────┐     ┌────────▼─────────┐
-    │  Pinned Host RAM   │     │   GPU VRAM        │
-    │   (Second Tier)    │     │  (First Tier)     │
+    │  Pinned Host RAM   │     │   GPU VRAM       │
+    │   (Second Tier)    │     │  (First Tier)    │
     └─────────┬──────────┘     └──────────────────┘
               │
     ┌─────────▼──────────┐
